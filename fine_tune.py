@@ -1,27 +1,69 @@
-import tensorflow as tf
-from transformers import GPT2Tokenizer, TFGPT2LMHeadModel
+import os
+import torch
+from torch.utils.data import Dataset
+from transformers import GPT2Tokenizer, GPT2LMHeadModel, Trainer, TrainingArguments
 
-# Load the GPT-2 tokenizer and model
-tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-model = TFGPT2LMHeadModel.from_pretrained('gpt2')
+FINE_TUNED_MODEL_DIR = './fine_tuned_model'
+DATA_PATH = 'data/energy_qa.txt'
 
-# Fine-tune model function
-def fine_tune_model(train_texts, epochs=1, batch_size=2):
-    # Tokenize input texts
-    input_ids = tokenizer(train_texts, return_tensors='tf', padding=True, truncation=True).input_ids
-    dataset = tf.data.Dataset.from_tensor_slices(input_ids).batch(batch_size)
-    
-    # Define an optimizer
-    optimizer = tf.keras.optimizers.Adam(learning_rate=5e-5)
-    
-    # Compile the model
-gpt2_model = model
-gpt2_model.compile(optimizer=optimizer)
-    
-    # Fine-tune the model
-    gpt2_model.fit(dataset, epochs=epochs)
 
-# Example usage
+class EnergyQADataset(Dataset):
+    """Dataset for energy QA text blocks."""
+
+    def __init__(self, encodings):
+        self.encodings = encodings
+
+    def __len__(self):
+        return len(self.encodings['input_ids'])
+
+    def __getitem__(self, idx):
+        item = {key: val[idx].clone().detach() for key, val in self.encodings.items()}
+        item['labels'] = item['input_ids'].clone()
+        return item
+
+
+def load_energy_texts(file_path=DATA_PATH):
+    """Parse Q&A blocks from the energy dataset file."""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    blocks = [block.strip() for block in content.strip().split('\n\n') if block.strip()]
+    return blocks
+
+
+def fine_tune_model(data_path=DATA_PATH, output_dir=FINE_TUNED_MODEL_DIR,
+                    epochs=3, batch_size=2, max_length=256):
+    """Fine-tune GPT-2 on the energy QA dataset and save the result."""
+    tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
+    tokenizer.pad_token = tokenizer.eos_token
+
+    model = GPT2LMHeadModel.from_pretrained('gpt2')
+
+    texts = load_energy_texts(data_path)
+    encodings = tokenizer(texts, truncation=True, padding='max_length',
+                          max_length=max_length, return_tensors='pt')
+    dataset = EnergyQADataset(encodings)
+
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        num_train_epochs=epochs,
+        per_device_train_batch_size=batch_size,
+        save_steps=500,
+        save_total_limit=2,
+        logging_dir='./logs',
+        no_cuda=not torch.cuda.is_available(),
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset,
+    )
+
+    trainer.train()
+    model.save_pretrained(output_dir)
+    tokenizer.save_pretrained(output_dir)
+    print(f"Fine-tuned model saved to {output_dir}")
+
+
 if __name__ == '__main__':
-    texts = ["Your text here..."]  # Replace with your training data
-    fine_tune_model(texts, epochs=3)
+    fine_tune_model()
