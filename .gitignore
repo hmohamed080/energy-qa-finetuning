@@ -1,0 +1,13 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Model files
+*.h5
+*.pth
+*.pt
+
+# IDE files
+.idea/
+*.sublime-workspace
+*.sublime-project
